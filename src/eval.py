@@ -20,6 +20,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from fitz import Rect
 from PIL import Image
+import traceback
+import matplotlib.patches as patches
+from matplotlib.patches import Patch
 
 sys.path.append("../detr")
 import util.misc as utils
@@ -278,9 +281,11 @@ def compute_metrics(mode, true_bboxes, true_labels, true_scores, true_cells,
 
     # Compute grids/matrices for comparison
     true_relspan_grid = np.array(grits.cells_to_relspan_grid(true_cells))
+    print("true:",true_relspan_grid.shape)
     true_bbox_grid = np.array(grits.cells_to_grid(true_cells, key='bbox'))
     true_text_grid = np.array(grits.cells_to_grid(true_cells, key='cell_text'), dtype=object)
     pred_relspan_grid = np.array(grits.cells_to_relspan_grid(pred_cells))
+    print("pred:",pred_relspan_grid.shape)
     pred_bbox_grid = np.array(grits.cells_to_grid(pred_cells, key='bbox'))
     pred_text_grid = np.array(grits.cells_to_grid(pred_cells, key='cell_text'), dtype=object)
 
@@ -462,28 +467,169 @@ def eval_tsr_sample(target, pred_logits, pred_bboxes, mode):
     img_words_filepath = target["img_words_path"]
     with open(img_words_filepath, 'r') as f:
         true_page_tokens = json.load(f)
-
+    
     true_table_structures, true_cells, _ = objects_to_cells(true_bboxes, true_labels, true_scores,
                                                             true_page_tokens, structure_class_names,
                                                             structure_class_thresholds, structure_class_map)
-
+    #print(true_table_structures)
+    #print(torch.max(pred_logits.softmax(-1), -1))
     m = pred_logits.softmax(-1).max(-1)
+    #print("m")
     pred_labels = list(m.indices.detach().cpu().numpy())
+    #print(pred_labels)
     pred_scores = list(m.values.detach().cpu().numpy())
+    #print(pred_scores)
     pred_bboxes = [elem.tolist() for elem in rescale_bboxes(pred_bboxes, true_img_size)]
+    #print(pred_bboxes)
     _, pred_cells, _ = objects_to_cells(pred_bboxes, pred_labels, pred_scores,
                                         true_page_tokens, structure_class_names,
                                         structure_class_thresholds, structure_class_map)
-
+    #print(pred_cells)
     metrics = compute_metrics(mode, true_bboxes, true_labels, true_scores, true_cells,
                                 pred_bboxes, pred_labels, pred_scores, pred_cells)
     statistics = compute_statistics(true_table_structures, true_cells)
 
     metrics.update(statistics)
     metrics['id'] = target["img_path"].split('/')[-1].split('.')[0]
-
+    print(metrics)
     return metrics
 
+
+def visualize_better(labels, bboxes, target, debug_dir):
+    try:            
+        img_filepath = target["img_path"]
+        img_filename = img_filepath.split("/")[-1]
+
+        bboxes_out_filename = img_filename.replace(".jpg", "_bboxes.jpg")
+        save_filepath = os.path.join(debug_dir, bboxes_out_filename)
+        
+        img = Image.open(img_filepath)
+        
+        ax = plt.gca()
+        ax.imshow(img, interpolation="lanczos")
+        plt.gcf().set_size_inches((24, 24))
+
+        tables = [bbox for bbox, label in zip(bboxes, labels) if label == 'table']
+        columns = [bbox for bbox, label in zip(bboxes, labels) if label == 'table column']
+        rows = [bbox for bbox, label in zip(bboxes, labels) if label == 'table row']
+        column_headers = [bbox for bbox, label in zip(bboxes, labels) if label == 'table column header']
+        projected_row_headers = [bbox for bbox, label in zip(bboxes, labels) if label == 'table projected row header']
+        spanning_cells = [bbox for bbox, label in zip(bboxes, labels) if label == 'table spanning cell']
+
+        for column_num, bbox in enumerate(columns):
+            if column_num % 2 == 0:
+                linewidth = 2
+                alpha = 0.6
+                facecolor = 'none'
+                edgecolor = 'red'
+                hatch = '..'
+            else:
+                linewidth = 2
+                alpha = 0.15
+                facecolor = (1, 0, 0)
+                edgecolor = (0.8, 0, 0)
+                hatch = ''
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0, 
+                                        edgecolor=edgecolor, facecolor=facecolor, linestyle="-",
+                                        hatch=hatch, alpha=alpha)
+            ax.add_patch(rect)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
+                                            edgecolor='red', facecolor='none', linestyle="-",
+                                            alpha=0.8)
+            ax.add_patch(rect)
+
+        for row_num, bbox in enumerate(rows):
+            if row_num % 2 == 1:
+                linewidth = 2
+                alpha = 0.6
+                edgecolor = 'blue'
+                facecolor = 'none'
+                hatch = '....'
+            else:
+                linewidth = 2
+                alpha = 0.1
+                facecolor = (0, 0, 1)
+                edgecolor = (0, 0, 0.8)
+                hatch = ''
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0, 
+                                        edgecolor=edgecolor, facecolor=facecolor, linestyle="-",
+                                        hatch=hatch, alpha=alpha)
+            ax.add_patch(rect)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
+                                            edgecolor='blue', facecolor='none', linestyle="-",
+                                            alpha=0.8)
+            ax.add_patch(rect)
+        
+        for bbox in column_headers:
+            linewidth = 3
+            alpha = 0.3
+            facecolor = (1, 0, 0.75) #(0.5, 0.45, 0.25)
+            edgecolor = (1, 0, 0.75) #(1, 0.9, 0.5)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
+                                        edgecolor='none',facecolor=facecolor, alpha=alpha)
+            ax.add_patch(rect)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0, 
+                                        edgecolor=edgecolor,facecolor='none',linestyle="-", hatch='///')
+            ax.add_patch(rect)
+
+        for bbox in projected_row_headers:
+            facecolor = (1, 0.9, 0.5) #(0, 0.75, 1) #(0, 0.4, 0.4)
+            edgecolor = (1, 0.9, 0.5) #(0, 0.7, 0.95)
+            alpha = 0.35
+            linewidth = 3
+            linestyle="--"
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
+                                        edgecolor='none',facecolor=facecolor, alpha=alpha)
+            ax.add_patch(rect)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=1,
+                                        edgecolor=edgecolor,facecolor='none',linestyle=linestyle)
+            ax.add_patch(rect)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0,
+                                        edgecolor=edgecolor,facecolor='none',linestyle=linestyle, hatch='\\\\')
+            ax.add_patch(rect)
+
+        for bbox in spanning_cells:
+            color = (0.2, 0.5, 0.2) #(0, 0.4, 0.4)
+            alpha = 0.4
+            linewidth = 4
+            linestyle="-"
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
+                                        edgecolor='none',facecolor=color, alpha=alpha)
+            ax.add_patch(rect)
+            rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=linewidth, 
+                                        edgecolor=color,facecolor='none',linestyle=linestyle) # hatch='//'
+            ax.add_patch(rect)
+
+        table_bbox = tables[0]
+        plt.xlim([table_bbox[0]-5, table_bbox[2]+5])
+        plt.ylim([table_bbox[3]+5, table_bbox[1]-5])
+        plt.xticks([], [])
+        plt.yticks([], [])
+
+        legend_elements = [Patch(facecolor=(0.9, 0.9, 1), edgecolor=(0, 0, 0.8),
+                                    label='Row (odd)'),
+                            Patch(facecolor=(1, 1, 1), edgecolor=(0, 0, 0.8),
+                                    label='Row (even)', hatch='...'),
+                            Patch(facecolor=(1, 1, 1), edgecolor=(0.8, 0, 0),
+                                    label='Column (odd)', hatch='...'),
+                            Patch(facecolor=(1, 0.85, 0.85), edgecolor=(0.8, 0, 0),
+                                    label='Column (even)'),
+                            Patch(facecolor=(0.68, 0.8, 0.68), edgecolor=(0.2, 0.5, 0.2),
+                                    label='Spanning cell'),
+                            Patch(facecolor=(1, 0.7, 0.925), edgecolor=(1, 0, 0.75),
+                                    label='Column header', hatch='///'),
+                            Patch(facecolor=(1, 0.965, 0.825), edgecolor=(1, 0.9, 0.5),
+                                    label='Projected row header', hatch='\\\\')]
+        ax.legend(handles=legend_elements, bbox_to_anchor=(0, -0.02), loc='upper left', borderaxespad=0,
+                        fontsize=16, ncol=4)  
+        plt.gcf().set_size_inches(20, 20)
+        plt.axis('off')
+        
+        plt.savefig(save_filepath, bbox_inches='tight', dpi=150)
+        plt.show()
+        plt.close()
+    except:
+        traceback.print_exc()
 
 def visualize(args, target, pred_logits, pred_bboxes):
     img_filepath = target["img_path"]
@@ -501,6 +647,9 @@ def visualize(args, target, pred_logits, pred_bboxes):
     pred_bboxes = pred_bboxes.detach().cpu()
     pred_bboxes = [elem.tolist() for elem in rescale_bboxes(pred_bboxes, img_size)]
 
+    pred_label_names = [structure_class_names[x] for x in pred_labels]
+    #visualize_better(pred_label_names, pred_bboxes, target, args.debug_save_dir)
+    #return 
     fig,ax = plt.subplots(1)
     ax.imshow(img, interpolation='lanczos')
 
@@ -550,6 +699,9 @@ def visualize(args, target, pred_logits, pred_bboxes):
 
         for cell in pred_cells:
             bbox = cell['bbox']
+            column_num = cell['column_nums'][0]
+            row_num = cell['row_nums'][0]
+
             if cell['header']:
                 alpha = 0.3
             else:
@@ -564,7 +716,7 @@ def visualize(args, target, pred_logits, pred_bboxes):
             rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=1, 
                                     edgecolor="magenta",facecolor='none',linestyle="--")
             ax.add_patch(rect) 
-
+            plt.text(bbox[0], bbox[1], f"{row_num},{column_num}")
         fig.set_size_inches((15, 15))
         plt.axis('off')
         plt.savefig(cells_out_filepath, bbox_inches='tight', dpi=100)
@@ -611,7 +763,7 @@ def evaluate(args, model, criterion, postprocessors, data_loader, base_ds, devic
 
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
-
+        #print(loss_dict)
         # reduce losses over all GPUs for logging purposes
         loss_dict_reduced = utils.reduce_dict(loss_dict)
         loss_dict_reduced_scaled = {k: v * weight_dict[k]
@@ -633,6 +785,7 @@ def evaluate(args, model, criterion, postprocessors, data_loader, base_ds, devic
             pred_logits_collection += list(outputs['pred_logits'].detach().cpu())
             pred_bboxes_collection += list(outputs['pred_boxes'].detach().cpu())
 
+            #print(pred_bboxes_collection)
             for target in targets:
                 for k, v in target.items():
                     if not k == 'img_path':
@@ -642,12 +795,19 @@ def evaluate(args, model, criterion, postprocessors, data_loader, base_ds, devic
                 img_words_filepath = os.path.join(args.table_words_dir, img_filename.replace(".jpg", "_words.json"))
                 target["img_words_path"] = img_words_filepath
             targets_collection += targets
-
+            # print(targets_collection)
             if batch_num % args.eval_step == 0 or batch_num == num_batches:
                 arguments = zip(targets_collection, pred_logits_collection, pred_bboxes_collection,
                                 repeat(args.mode))
-                with multiprocessing.Pool(args.eval_pool_size) as pool:
-                    metrics = pool.starmap_async(eval_tsr_sample, arguments).get()
+                #print(list(arguments)[0])
+                metrics = map(eval_tsr_sample,targets_collection,pred_logits_collection,pred_bboxes_collection,repeat(args.mode))
+                #print(metrics)
+                #print(list(arguments))
+                #metrics = map(eval_tsr_sample, list(arguments)[0], list(arguments)[1], list(arguments)[2], list(arguments)[3])
+                #print("metrics:",metrics)
+                #with multiprocessing.Pool(args.eval_pool_size) as pool:
+                #    metrics = pool.starmap(eval_tsr_sample, arguments).get()
+                #    print(metrics)
                 tsr_metrics += metrics
                 pred_logits_collection = []
                 pred_bboxes_collection = []

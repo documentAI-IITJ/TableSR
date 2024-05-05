@@ -96,7 +96,7 @@ def main():
         print(filename)
         try:
             xml_filepath = os.path.join(data_directory, split, filename)
-            img_filepath = xml_filepath.replace(split, "images").replace(".xml", ".jpg")
+            img_filepath = xml_filepath.replace(split, "images").replace(".xml", ".png")
             
             bboxes, labels = read_pascal_voc(xml_filepath)
             img = Image.open(img_filepath)

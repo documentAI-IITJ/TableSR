@@ -383,6 +383,8 @@ def grits_top(true_relative_span_grid, pred_relative_span_grid):
     relative to the current grid cell location, in grid coordinate units.
     Note that for a non-spanning cell this will always be [0, 0, 1, 1].
     """
+    #print(true_relative_span_grid)
+    #print(pred_relative_span_grid)
     return factored_2dmss(true_relative_span_grid,
                           pred_relative_span_grid,
                           reward_function=iou)

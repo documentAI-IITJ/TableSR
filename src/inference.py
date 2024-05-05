@@ -325,10 +325,23 @@ def objects_to_structures(objects, tokens, class_thresholds):
                 if iob(obj['bbox'], header_obj['bbox']) >= 0.5:
                     obj['column header'] = True
 
+        row_rect = Rect()
+        for obj in rows:
+            row_rect.include_rect(obj['bbox'])
+        column_rect = Rect() 
+        for obj in columns:
+            column_rect.include_rect(obj['bbox'])
+        table['row_column_bbox'] = [column_rect[0], row_rect[1], column_rect[2], row_rect[3]]
+        table['bbox'] = table['row_column_bbox']
+
+        # Process the rows and columns into a complete segmented table
+        columns = postprocess.align_columns(columns, table['row_column_bbox'])
+        rows = postprocess.align_rows(rows, table['row_column_bbox'])
         # Refine table structures
         rows = postprocess.refine_rows(rows, table_tokens, class_thresholds['table row'])
         columns = postprocess.refine_columns(columns, table_tokens, class_thresholds['table column'])
 
+        
         # Shrink table bbox to just the total height of the rows
         # and the total width of the columns
         row_rect = Rect()
@@ -352,9 +365,52 @@ def objects_to_structures(objects, tokens, class_thresholds):
         if len(rows) > 0 and len(columns) > 1:
             structure = refine_table_structure(structure, class_thresholds)
 
+        structure['columns'] = fill_column_gaps(structure['columns'])
+        structure['rows'] = fill_row_gaps(structure['rows'])
         table_structures.append(structure)
 
     return table_structures
+
+def fill_column_gaps(columns):
+    if len(columns) == 0:
+        return columns
+
+    mean_width = 0
+    for obj in columns:
+        mean_width += abs(obj['bbox'][2]-obj['bbox'][1])
+    mean_width /= len(columns)
+    insertions = []
+
+    for i in range(len(columns)-1):
+        gap_width = columns[i+1]['bbox'][0]-columns[i]['bbox'][2]
+        if gap_width > (mean_width/3):
+            new_col = {'label':'table column', 'score': 0.99}
+            new_col['bbox'] = [columns[i]['bbox'][2], columns[i]['bbox'][1], columns[i+1]['bbox'][0],columns[i]['bbox'][3]]
+            insertions.append((i+1, new_col))
+           
+    for i in insertions:
+        columns.insert(i[0], i[1])
+    return columns
+
+def fill_row_gaps(rows):
+    if len(rows) == 0:
+        return rows
+    mean_width = 0
+    for obj in rows:
+        mean_width += abs(obj['bbox'][3]-obj['bbox'][1])
+    mean_width /= len(rows)
+    insertions = []
+    for i in range(len(rows)-1):
+        gap_width = rows[i+1]['bbox'][1]-rows[i]['bbox'][3]
+        if gap_width > (mean_width/3):
+            new_row = {'label':'table row', 'score': 0.99, 'column header': False}
+            new_row['bbox'] = [rows[i]['bbox'][0], rows[i]['bbox'][3], rows[i]['bbox'][2], rows[i+1]['bbox'][1]]
+            insertions.append((i+1, new_row))
+          
+    
+    for i in insertions:
+        rows.insert(i[0], i[1])
+    return rows
 
 def structure_to_cells(table_structure, tokens):
     """
@@ -434,9 +490,10 @@ def structure_to_cells(table_structure, tokens):
         confidence_score = 0
 
     # Dilate rows and columns before final extraction
-    #dilated_columns = fill_column_gaps(columns, table_bbox)
+    
+    #dilated_columns = fill_column_gaps(columns)
     dilated_columns = columns
-    #dilated_rows = fill_row_gaps(rows, table_bbox)
+    #dilated_rows = fill_row_gaps(rows)
     dilated_rows = rows
     for cell in cells:
         column_rect = Rect()
@@ -620,9 +677,12 @@ def visualize_cells(img, cells, out_path):
     plt.imshow(img, interpolation="lanczos")
     plt.gcf().set_size_inches(20, 20)
     ax = plt.gca()
+    print("cells:",cells)
     
     for cell in cells:
         bbox = cell['bbox']
+        column_num = cell['column_nums'][0]
+        row_num = cell['row_nums'][0]
 
         if cell['column header']:
             facecolor = (1, 0, 0.45)
@@ -652,6 +712,7 @@ def visualize_cells(img, cells, out_path):
         rect = patches.Rectangle(bbox[:2], bbox[2]-bbox[0], bbox[3]-bbox[1], linewidth=0, 
                                     edgecolor=edgecolor,facecolor='none',linestyle='-', hatch=hatch, alpha=0.2)
         ax.add_patch(rect)
+        plt.text(bbox[0], bbox[1], f"{row_num},{column_num}")
 
     plt.xticks([], [])
     plt.yticks([], [])
@@ -753,7 +814,7 @@ class TableExtractionPipeline(object):
 
         return out_formats
 
-    def recognize(self, img, tokens=None, out_objects=False, out_cells=False,
+    def recognize(self, img, img_file, tokens=None, out_objects=False, out_cells=False,
                   out_html=False, out_csv=False):
         out_formats = {}
         if self.str_model is None:
@@ -796,7 +857,7 @@ class TableExtractionPipeline(object):
         if out_csv:
             tables_csvs = [cells_to_csv(cells) for cells in tables_cells]
             out_formats['csv'] = tables_csvs
-
+        # output_result("cells", [tables_cells], args, img, img_file)
         return out_formats
 
     def extract(self, img, tokens=None, out_objects=True, out_crops=False, out_cells=False,
@@ -828,7 +889,7 @@ def output_result(key, val, args, img, img_file):
         with open(os.path.join(args.out_dir, out_file), 'w') as f:
             json.dump(val, f)
         if args.visualize:
-            out_file = img_file.replace(".jpg", "_fig_tables.jpg")
+            out_file = img_file.replace(".png", "_fig_tables.png")
             out_path = os.path.join(args.out_dir, out_file)
             visualize_detected_tables(img, val, out_path)
     elif not key == 'image' and not key == 'tokens':
@@ -842,13 +903,13 @@ def output_result(key, val, args, img, img_file):
                     with open(os.path.join(args.out_dir, out_words_file), 'w') as f:
                         json.dump(cropped_table['tokens'], f)
             elif key == 'cells':
-                out_file = img_file.replace(".jpg", "_{}_objects.json".format(idx))
+                out_file = img_file.replace(".png", "_{}_objects.json".format(idx))
                 with open(os.path.join(args.out_dir, out_file), 'w') as f:
                     json.dump(elem, f)
                 if args.verbose:
                     print(elem)
                 if args.visualize:
-                    out_file = img_file.replace(".jpg", "_fig_cells.jpg")
+                    out_file = img_file.replace(".png", "_fig_cells.png")
                     out_path = os.path.join(args.out_dir, out_file)
                     visualize_cells(img, elem, out_path)
             else:
@@ -884,7 +945,7 @@ def main():
     for count, img_file in enumerate(img_files):
         print("({}/{})".format(count+1, num_files))
         img_path = os.path.join(args.image_dir, img_file)
-        img = Image.open(img_path)
+        img = Image.open(img_path).convert('RGB')
         print("Image loaded.")
 
         if not args.words_dir is None:
@@ -910,11 +971,12 @@ def main():
             tokens = []
 
         if args.mode == 'recognize':
-            extracted_table = pipe.recognize(img, tokens, out_objects=args.objects, out_cells=args.csv,
+            extracted_table = pipe.recognize(img, img_file, tokens, out_objects=args.objects, out_cells=args.csv,
                                 out_html=args.html, out_csv=args.csv)
             print("Table(s) recognized.")
 
             for key, val in extracted_table.items():
+                print("Key:",key)
                 output_result(key, val, args, img, img_file)
 
         if args.mode == 'detect':

@@ -507,12 +507,13 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         self.transforms = transforms
         self.do_crop=do_crop
         self.make_coco = make_coco
-        self.image_extension = image_extension
+        self.image_extension = ".png"
         self.include_eval = include_eval
         self.class_map = class_map
         self.class_list = list(class_map)
         self.class_set = set(class_map.values())
         self.class_set.remove(class_map['no object'])
+        #self.make_coco = True
 
 
         try:
@@ -522,6 +523,7 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         except:
             lines = os.listdir(root)
         xml_page_ids = set([f.strip().replace(".xml", "") for f in lines if f.strip().endswith(".xml")])
+        #print(xml_page_ids)
             
         image_directory = os.path.join(root, "..", "images")
         try:
@@ -530,8 +532,11 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         except:
             lines = os.listdir(image_directory)
         png_page_ids = set([f.strip().replace(self.image_extension, "") for f in lines if f.strip().endswith(self.image_extension)])
-        
-        self.page_ids = sorted(xml_page_ids.intersection(png_page_ids))
+        #print(png_page_ids)
+
+        self.page_ids = list(sorted(xml_page_ids.intersection(png_page_ids)))
+        #print(self.page_ids)
+        #self.page_ids = png_page_ids
         if not max_size is None:
             random.shuffle(self.page_ids)
             self.page_ids = self.page_ids[:max_size]
@@ -555,8 +560,10 @@ class PDFTablesDataset(torch.utils.data.Dataset):
             self.dataset['images'] = [{'id': idx} for idx, _ in enumerate(self.page_ids)]
             self.dataset['annotations'] = []
             ann_id = 0
+            print(self.page_ids)
             for image_id, page_id in enumerate(self.page_ids):
                 annot_path = os.path.join(self.root, page_id + ".xml")
+                print(annot_path)
                 bboxes, labels = read_pascal_voc(annot_path, class_map=self.class_map)
 
                 # Reduce class set
@@ -609,6 +616,8 @@ class PDFTablesDataset(torch.utils.data.Dataset):
         self.catToImgs = catToImgs
         self.imgs = imgs
         self.cats = cats
+        #print(imgs)
+        #print(anns)
 
     def __getitem__(self, idx):
         # load images ad masks

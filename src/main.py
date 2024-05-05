@@ -311,13 +311,14 @@ def train(args, model, criterion, postprocessors, device):
             max_batches_per_epoch=max_batches_per_epoch,
             print_freq=1000)
         print("Epoch completed in ", datetime.now() - epoch_timing)
-
+     
         lr_scheduler.step()
 
         pubmed_stats, coco_evaluator = evaluate(model, criterion,
                                                 postprocessors,
                                                 data_loader_val, dataset_val,
                                                 device, None)
+                                                
         print("pubmed: AP50: {:.3f}, AP75: {:.3f}, AP: {:.3f}, AR: {:.3f}".
               format(pubmed_stats['coco_eval_bbox'][1],
                      pubmed_stats['coco_eval_bbox'][2],

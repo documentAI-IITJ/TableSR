@@ -114,6 +114,19 @@ def objects_to_table_structures(table_object, objects_in_table, tokens_in_table,
     for column in columns:
         column['page'] = page_num
 
+    row_rect = Rect()
+    for obj in rows:
+        row_rect.include_rect(obj['bbox'])
+    column_rect = Rect() 
+    for obj in columns:
+        column_rect.include_rect(obj['bbox'])
+    table_object['row_column_bbox'] = [column_rect[0], row_rect[1], column_rect[2], row_rect[3]]
+    table_object['bbox'] = table_object['row_column_bbox']
+
+    # Process the rows and columns into a complete segmented table
+    columns = align_columns(columns, table_object['row_column_bbox'])
+    rows = align_rows(rows, table_object['row_column_bbox'])
+
     #Refine table structures
     rows = refine_rows(rows, tokens_in_table, class_thresholds['table row'])
     columns = refine_columns(columns, tokens_in_table, class_thresholds['table column'])
@@ -125,6 +138,7 @@ def objects_to_table_structures(table_object, objects_in_table, tokens_in_table,
         row_rect.include_rect(obj['bbox'])
     column_rect = Rect() 
     for obj in columns:
+        print(obj)
         column_rect.include_rect(obj['bbox'])
     table_object['row_column_bbox'] = [column_rect[0], row_rect[1], column_rect[2], row_rect[3]]
     table_object['bbox'] = table_object['row_column_bbox']
@@ -140,7 +154,7 @@ def objects_to_table_structures(table_object, objects_in_table, tokens_in_table,
 
     if len(rows) > 0 and len(columns) > 1:
         table_structures = refine_table_structures(table_object['bbox'], table_structures, tokens_in_table, class_thresholds)
-
+    
     return table_structures
 
 
@@ -459,7 +473,7 @@ def nms(objects, match_criteria="object2_overlap", match_threshold=0.05, keep_hi
 
     num_objects = len(objects)
     suppression = [False for obj in objects]
-
+   
     for object2_num in range(1, num_objects):
         object2_rect = Rect(objects[object2_num]['bbox'])
         object2_area = object2_rect.get_area()
@@ -717,6 +731,8 @@ def table_structure_to_cells(table_structures, table_spans, table_bbox):
             cell['subcell'] = False
             for supercell in supercells:
                 supercell_rect = Rect(list(supercell['bbox']))
+                if cell_rect.get_area() == 0:
+                    continue
                 if (supercell_rect.intersect(cell_rect).get_area()
                         / cell_rect.get_area()) > 0.5:
                     cell['subcell'] = True
